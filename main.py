@@ -141,7 +141,6 @@ async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_T
 # --- Telegram Bot Logic ---
 telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN")).build()
  
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
