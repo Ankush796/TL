@@ -141,7 +141,8 @@ async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_T
 # --- Telegram Bot Logic ---
 telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN")).build()
  
-    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     users_collection.update_one(
@@ -154,9 +155,9 @@ telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN"))
         upsert=True
     )
 
-    # ===== MULTI SUPPORT CHECK (OPTION 2) =====
-    if not await check_channel_membership(user_id, context):
-        callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
+    # 🔐 FORCE JOIN — ONLY FOR PROTECTED LINKS
+    if context.args and not await check_channel_membership(user_id, context):
+        callback_data = f"check_join_{context.args[0]}"
 
         keyboard = []
         for ch in get_support_channels():
@@ -169,23 +170,16 @@ telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN"))
             [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
         )
 
-        message_text = (
-            "🔐 *This is a Protected Link*\n\n"
-            "Join our channel first to access this link.\n"
-            "Then click 'Check' below."
-        ) if context.args else (
-            "🔐 Join our channel first to use this bot.\n"
-            "Then click 'Check' below."
-        )
-
         await update.message.reply_text(
-            message_text,
+            "🔐 *This is a Protected Link*\n\n"
+            "Join all channels above to access this link.\n"
+            "Then click 'Check' below.",
             reply_markup=InlineKeyboardMarkup(keyboard),
-            parse_mode=ParseMode.MARKDOWN if context.args else None
+            parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    # ===== PROTECTED LINK FLOW (UNCHANGED) =====
+    # 🔗 PROTECTED LINK FLOW (UNCHANGED)
     if context.args:
         encoded_id = context.args[0]
         link_data = links_collection.find_one({"_id": encoded_id, "active": True})
@@ -203,11 +197,11 @@ telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN"))
             await update.message.reply_text("❌ Link expired or revoked")
         return
 
-    # ===== WELCOME UI (MULTI SUPPORT FIXED) =====
+    # 👋 NORMAL START — WELCOME UI
     user_name = update.effective_user.first_name or "User"
 
-    welcome_msg = """╔──────── ✧ ────────╗
-      Welcome {username}
+    welcome_msg = f"""╔──────── ✧ ────────╗
+      Welcome {user_name}
 ╚──────── ✧ ────────╝
 
 🤖 I am your Link Protection Bot
@@ -222,11 +216,9 @@ I help you keep your channel links safe & secure.
 • 🔒 Advanced Link Encryption
 • 🚀 Instant Link Generation
 • 🛡️ Anti-Forward Protection
-• 🎯 Easy to use UI""".format(username=user_name)
+• 🎯 Easy to use UI"""
 
     keyboard = []
-
-    # 🔥 MULTI SUPPORT CHANNELS / GROUPS (NO PRIMARY)
     for ch in get_support_channels():
         invite_link = await get_channel_invite_link(context, ch)
         keyboard.append(
@@ -241,7 +233,6 @@ I help you keep your channel links safe & secure.
         welcome_msg,
         reply_markup=InlineKeyboardMarkup(keyboard)
     )
-
     await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard))
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button callbacks."""
