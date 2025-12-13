@@ -140,8 +140,8 @@ async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_T
 
 # --- Telegram Bot Logic ---
 telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN")).build()
-
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+ 
+    async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
     users_collection.update_one(
@@ -185,7 +185,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
         return
 
-    # ===== PROTECTED LINK FLOW =====
+    # ===== PROTECTED LINK FLOW (UNCHANGED) =====
     if context.args:
         encoded_id = context.args[0]
         link_data = links_collection.find_one({"_id": encoded_id, "active": True})
@@ -203,7 +203,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("❌ Link expired or revoked")
         return
 
-    # ===== WELCOME UI (UNCHANGED) =====
+    # ===== WELCOME UI (MULTI SUPPORT FIXED) =====
     user_name = update.effective_user.first_name or "User"
 
     welcome_msg = """╔──────── ✧ ────────╗
@@ -225,13 +225,21 @@ I help you keep your channel links safe & secure.
 • 🎯 Easy to use UI""".format(username=user_name)
 
     keyboard = []
-    support_channel = get_primary_support_channel()
-    if support_channel:
-        invite_link = await get_channel_invite_link(context, support_channel)
-        keyboard.append([InlineKeyboardButton("🌟 Support Channel", url=invite_link)])
+
+    # 🔥 MULTI SUPPORT CHANNELS / GROUPS (NO PRIMARY)
+    for ch in get_support_channels():
+        invite_link = await get_channel_invite_link(context, ch)
+        keyboard.append(
+            [InlineKeyboardButton("🌟 Support Channel", url=invite_link)]
+        )
 
     keyboard.append(
         [InlineKeyboardButton("🚀 Create Protected Link", callback_data="create_link")]
+    )
+
+    await update.message.reply_text(
+        welcome_msg,
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
     await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard))
