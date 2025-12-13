@@ -144,6 +144,7 @@ telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN"))
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     user_id = update.effective_user.id
 
+    # Save / update user
     users_collection.update_one(
         {"user_id": user_id},
         {"$set": {
@@ -154,9 +155,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         upsert=True
     )
 
-    # 🔐 FORCE JOIN — ONLY FOR PROTECTED LINKS
-    if context.args and not await check_channel_membership(user_id, context):
-        callback_data = f"check_join_{context.args[0]}"
+    # 🔐 FORCE JOIN — FOR ALL USERS (NORMAL + PROTECTED)
+    if not await check_channel_membership(user_id, context):
+        callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
 
         keyboard = []
         for ch in get_support_channels():
@@ -170,15 +171,15 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         )
 
         await update.message.reply_text(
-            "🔐 *This is a Protected Link*\n\n"
-            "Join all channels above to access this link.\n"
-            "Then click 'Check' below.",
+            "🔐 *Access Restricted*\n\n"
+            "Please join all required channels/groups to use this bot.\n"
+            "After joining, click ✅ Check.",
             reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode=ParseMode.MARKDOWN
         )
         return
 
-    # 🔗 PROTECTED LINK FLOW (UNCHANGED)
+    # 🔗 PROTECTED LINK FLOW (AFTER JOIN)
     if context.args:
         encoded_id = context.args[0]
         link_data = links_collection.find_one({"_id": encoded_id, "active": True})
@@ -196,7 +197,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("❌ Link expired or revoked")
         return
 
-    # 👋 NORMAL START — WELCOME UI
+    # 👋 NORMAL START — WELCOME UI (ONLY AFTER JOIN)
     user_name = update.effective_user.first_name or "User"
 
     welcome_msg = f"""╔──────── ✧ ────────╗
@@ -228,10 +229,6 @@ I help you keep your channel links safe & secure.
         [InlineKeyboardButton("🚀 Create Protected Link", callback_data="create_link")]
     )
 
-    await update.message.reply_text(
-        welcome_msg,
-        reply_markup=InlineKeyboardMarkup(keyboard)
-    )
     await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard))
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button callbacks."""
