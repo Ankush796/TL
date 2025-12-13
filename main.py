@@ -26,7 +26,6 @@ MONGODB_URI = os.environ.get("MONGODB_URI")
 if not MONGODB_URI:
     raise Exception("MONGODB_URI environment variable not set!")
 
-# Initialize MongoDB client and select database/collection
 client = MongoClient(MONGODB_URI)
 db_name = "protected_bot_db"
 db = client[db_name]
@@ -36,12 +35,9 @@ broadcast_collection = db["broadcast_history"]
 channels_collection = db["channels"]
 
 def init_db():
-    """Verifies the MongoDB connection."""
     try:
         client.admin.command('ismaster')
         logger.info("✅ MongoDB connected")
-        
-        # Create indexes
         users_collection.create_index("user_id", unique=True)
         links_collection.create_index("created_by")
         links_collection.create_index("active")
@@ -51,27 +47,31 @@ def init_db():
         logger.error(f"❌ MongoDB error: {e}")
         raise
 
+# ================= MULTI SUPPORT (NO UI CHANGE) =================
+def get_support_channels():
+    raw = os.environ.get("SUPPORT_CHANNELS", "").strip()
+    if not raw:
+        return []
+    return [c.strip() for c in raw.split(",") if c.strip()]
+
+def get_primary_support_channel():
+    channels = get_support_channels()
+    return channels[0] if channels else ""
+
+# ================= INVITE LINK =================
 async def get_channel_invite_link(context: ContextTypes.DEFAULT_TYPE, channel_id: str) -> str:
-    """Get or create an invite link for a channel."""
     try:
-        # Try to get from database first
         channel_data = channels_collection.find_one({"channel_id": channel_id})
         if channel_data and channel_data.get("invite_link"):
-            # Check if link is still valid (created within last 24 hours)
             if channel_data.get("created_at") and \
                (datetime.datetime.now() - channel_data["created_at"]).days < 1:
                 return channel_data["invite_link"]
-        
-        # Convert channel_id to appropriate format
+
         try:
             chat_id = int(channel_id)
         except ValueError:
-            if channel_id.startswith('@'):
-                chat_id = channel_id
-            else:
-                chat_id = f"@{channel_id}"
-        
-        # Try to create a new invite link
+            chat_id = channel_id if channel_id.startswith('@') else f"@{channel_id}"
+
         try:
             invite_link = await context.bot.create_chat_invite_link(
                 chat_id=chat_id,
@@ -81,8 +81,6 @@ async def get_channel_invite_link(context: ContextTypes.DEFAULT_TYPE, channel_id
                 member_limit=None
             )
             invite_url = invite_link.invite_link
-            
-            # Save to database
             channels_collection.update_one(
                 {"channel_id": channel_id},
                 {"$set": {
@@ -92,33 +90,25 @@ async def get_channel_invite_link(context: ContextTypes.DEFAULT_TYPE, channel_id
                 }},
                 upsert=True
             )
-            
-            logger.info(f"✅ Created new invite link for channel {channel_id}")
             return invite_url
-            
-        except BadRequest as e:
-            logger.warning(f"⚠️ Cannot create invite link (admin rights?): {e}")
-            # Fallback: Try to get existing invite link
+        except BadRequest:
             try:
                 chat = await context.bot.get_chat(chat_id)
                 if chat.invite_link:
                     return chat.invite_link
                 elif chat.username:
                     return f"https://t.me/{chat.username}"
-            except Exception as e2:
-                logger.error(f"❌ Failed to get chat info: {e2}")
-                
-            # If all fails, use t.me format
+            except Exception:
+                pass
+
             if channel_id.startswith('-100'):
                 return f"https://t.me/c/{channel_id[4:]}"
             elif channel_id.startswith('@'):
                 return f"https://t.me/{channel_id[1:]}"
             else:
                 return f"https://t.me/{channel_id}"
-                
     except Exception as e:
         logger.error(f"❌ Error getting channel invite link: {e}")
-        # Final fallback
         if channel_id.startswith('-100'):
             return f"https://t.me/c/{channel_id[4:]}"
         elif channel_id.startswith('@'):
@@ -126,35 +116,34 @@ async def get_channel_invite_link(context: ContextTypes.DEFAULT_TYPE, channel_id
         else:
             return f"https://t.me/{channel_id}"
 
+# ================= MEMBERSHIP CHECK (MULTI) =================
 async def check_channel_membership(user_id: int, context: ContextTypes.DEFAULT_TYPE) -> bool:
-    """Check if user is member of the support channel."""
-    support_channel = os.environ.get("SUPPORT_CHANNEL", "").strip()
-    if not support_channel:
+    channels = get_support_channels()
+    if not channels:
         return True
-    
-    try:
+
+    for support_channel in channels:
         try:
-            chat_id = int(support_channel)
-        except ValueError:
-            if support_channel.startswith('@'):
-                chat_id = support_channel
-            else:
-                chat_id = f"@{support_channel}"
-        
-        chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
-        return chat_member.status in [ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER]
-    except Exception as e:
-        logger.error(f"❌ Channel check error: {e}")
-        return False
+            try:
+                chat_id = int(support_channel)
+            except ValueError:
+                chat_id = support_channel if support_channel.startswith("@") else f"@{support_channel}"
+
+            chat_member = await context.bot.get_chat_member(chat_id=chat_id, user_id=user_id)
+            if chat_member.status not in (ChatMember.MEMBER, ChatMember.ADMINISTRATOR, ChatMember.OWNER):
+                return False
+        except Exception as e:
+            logger.error(f"❌ Channel check error ({support_channel}): {e}")
+            return False
+
+    return True
 
 # --- Telegram Bot Logic ---
 telegram_bot_app = Application.builder().token(os.environ.get("TELEGRAM_TOKEN")).build()
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles the /start command."""
     user_id = update.effective_user.id
-    
-    # Store user
+
     users_collection.update_one(
         {"user_id": user_id},
         {"$set": {
@@ -164,72 +153,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         }},
         upsert=True
     )
-    
-    # First check channel membership regardless of args
+
     if not await check_channel_membership(user_id, context):
-        support_channel = os.environ.get("SUPPORT_CHANNEL", "").strip()
+        support_channel = get_primary_support_channel()
         if support_channel:
-            # Get channel invite link
             invite_link = await get_channel_invite_link(context, support_channel)
-            
-            # If there's a protected link argument, include it in callback data
-            if context.args:
-                encoded_id = context.args[0]
-                callback_data = f"check_join_{encoded_id}"
-            else:
-                callback_data = "check_join"
-            
+            callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
             keyboard = [
                 [InlineKeyboardButton("📢 Join Channel", url=invite_link)],
                 [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
             ]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
-            if context.args:
-                message_text = (
-                    "🔐 *This is a Protected Link*\n\n"
-                    "Join our channel first to access this link.\n"
-                    "Then click 'Check' below."
-                )
-            else:
-                message_text = (
-                    "🔐 Join our channel first to use this bot.\n"
-                    "Then click 'Check' below."
-                )
-            
+            message_text = (
+                "🔐 *This is a Protected Link*\n\n"
+                "Join our channel first to access this link.\n"
+                "Then click 'Check' below."
+            ) if context.args else (
+                "🔐 Join our channel first to use this bot.\n"
+                "Then click 'Check' below."
+            )
+
             await update.message.reply_text(
                 message_text,
-                reply_markup=reply_markup,
+                reply_markup=InlineKeyboardMarkup(keyboard),
                 parse_mode=ParseMode.MARKDOWN if context.args else None
             )
             return
-    
-    # User is in channel or no channel required
-    
-    # Check if this is a protected link (has argument)
+
     if context.args:
         encoded_id = context.args[0]
         link_data = links_collection.find_one({"_id": encoded_id, "active": True})
-
         if link_data:
             web_app_url = f"{os.environ.get('RENDER_EXTERNAL_URL')}/join?token={encoded_id}"
-            
             keyboard = [[InlineKeyboardButton("🔗 Join Group", web_app=WebAppInfo(url=web_app_url))]]
-            reply_markup = InlineKeyboardMarkup(keyboard)
-            
             await update.message.reply_text(
-                "🔐 This is a Protected Link\n\n"
-                "Click the button below to proceed.",
-                reply_markup=reply_markup
+                "🔐 This is a Protected Link\n\nClick the button below to proceed.",
+                reply_markup=InlineKeyboardMarkup(keyboard)
             )
         else:
             await update.message.reply_text("❌ Link expired or revoked")
         return
-    
-    # If no args, show beautiful welcome message
+
     user_name = update.effective_user.first_name or "User"
-    
-    # Create the beautiful welcome message
     welcome_msg = """╔──────── ✧ ────────╗
       Welcome {username}
 ╚──────── ✧ ────────╝
@@ -247,21 +211,15 @@ I help you keep your channel links safe & secure.
 • 🚀 Instant Link Generation
 • 🛡️ Anti-Forward Protection
 • 🎯 Easy to use UI""".format(username=user_name)
-    
-    # Create keyboard with support channel button
+
     keyboard = []
-    
-    support_channel = os.environ.get("SUPPORT_CHANNEL", "").strip()
+    support_channel = get_primary_support_channel()
     if support_channel:
         invite_link = await get_channel_invite_link(context, support_channel)
         keyboard.append([InlineKeyboardButton("🌟 Support Channel", url=invite_link)])
-    
     keyboard.append([InlineKeyboardButton("🚀 Create Protected Link", callback_data="create_link")])
-    
-    reply_markup = InlineKeyboardMarkup(keyboard) if keyboard else None
-    
-    await update.message.reply_text(welcome_msg, reply_markup=reply_markup)
 
+    await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard))
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handle button callbacks."""
     query = update.callback_query
