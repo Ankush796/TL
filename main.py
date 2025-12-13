@@ -154,42 +154,47 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         upsert=True
     )
 
-   if not await check_channel_membership(user_id, context):
-    callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
+    # ===== MULTI SUPPORT CHECK (OPTION 2) =====
+    if not await check_channel_membership(user_id, context):
+        callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
 
-    keyboard = []
-    for ch in get_support_channels():
-        invite_link = await get_channel_invite_link(context, ch)
+        keyboard = []
+        for ch in get_support_channels():
+            invite_link = await get_channel_invite_link(context, ch)
+            keyboard.append(
+                [InlineKeyboardButton("📢 Join Channel", url=invite_link)]
+            )
+
         keyboard.append(
-            [InlineKeyboardButton("📢 Join Channel", url=invite_link)]
+            [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
         )
 
-    keyboard.append(
-        [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
-    )
+        message_text = (
+            "🔐 *This is a Protected Link*\n\n"
+            "Join our channel first to access this link.\n"
+            "Then click 'Check' below."
+        ) if context.args else (
+            "🔐 Join our channel first to use this bot.\n"
+            "Then click 'Check' below."
+        )
 
-    message_text = (
-        "🔐 *This is a Protected Link*\n\n"
-        "Join our channel first to access this link.\n"
-        "Then click 'Check' below."
-    ) if context.args else (
-        "🔐 Join our channel first to use this bot.\n"
-        "Then click 'Check' below."
-    )
+        await update.message.reply_text(
+            message_text,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode=ParseMode.MARKDOWN if context.args else None
+        )
+        return
 
-    await update.message.reply_text(
-        message_text,
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode=ParseMode.MARKDOWN if context.args else None
-    )
-    return
-
+    # ===== PROTECTED LINK FLOW =====
     if context.args:
         encoded_id = context.args[0]
         link_data = links_collection.find_one({"_id": encoded_id, "active": True})
+
         if link_data:
             web_app_url = f"{os.environ.get('RENDER_EXTERNAL_URL')}/join?token={encoded_id}"
-            keyboard = [[InlineKeyboardButton("🔗 Join Group", web_app=WebAppInfo(url=web_app_url))]]
+            keyboard = [[
+                InlineKeyboardButton("🔗 Join Group", web_app=WebAppInfo(url=web_app_url))
+            ]]
             await update.message.reply_text(
                 "🔐 This is a Protected Link\n\nClick the button below to proceed.",
                 reply_markup=InlineKeyboardMarkup(keyboard)
@@ -198,7 +203,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
             await update.message.reply_text("❌ Link expired or revoked")
         return
 
+    # ===== WELCOME UI (UNCHANGED) =====
     user_name = update.effective_user.first_name or "User"
+
     welcome_msg = """╔──────── ✧ ────────╗
       Welcome {username}
 ╚──────── ✧ ────────╝
@@ -222,7 +229,10 @@ I help you keep your channel links safe & secure.
     if support_channel:
         invite_link = await get_channel_invite_link(context, support_channel)
         keyboard.append([InlineKeyboardButton("🌟 Support Channel", url=invite_link)])
-    keyboard.append([InlineKeyboardButton("🚀 Create Protected Link", callback_data="create_link")])
+
+    keyboard.append(
+        [InlineKeyboardButton("🚀 Create Protected Link", callback_data="create_link")]
+    )
 
     await update.message.reply_text(welcome_msg, reply_markup=InlineKeyboardMarkup(keyboard))
 async def button_callback(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
