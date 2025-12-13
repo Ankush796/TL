@@ -251,14 +251,15 @@ async def broadcast_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("❌ Cancel", callback_data="cancel_broadcast")]
     ])
 
-    await update.message.reply_text(
-        "⚠️ Confirm broadcast?",
-        reply_markup=kb
-    )
+    await update.message.reply_text("⚠️ Confirm broadcast?", reply_markup=kb)
 
 async def handle_broadcast_confirmation(update: Update, context: ContextTypes.DEFAULT_TYPE):
     q = update.callback_query
     await q.answer()
+
+    if q.data == "cancel_broadcast":
+        await q.message.edit_text("❌ Broadcast cancelled")
+        return
 
     msg = context.user_data.get("broadcast")
     users = list(users_collection.find({}))
@@ -282,13 +283,33 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode=ParseMode.MARKDOWN
     )
 
+# ================= IGNORE NON COMMAND =================
+async def ignore_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    return
+
+# ================= ERROR HANDLER =================
+async def error_handler(update: object, context: ContextTypes.DEFAULT_TYPE):
+    logger.error("Exception while handling update:", exc_info=context.error)
+
 # ================= REGISTER =================
 telegram_bot_app.add_handler(CommandHandler("start", start))
 telegram_bot_app.add_handler(CommandHandler("protect", protect_command))
 telegram_bot_app.add_handler(CommandHandler("broadcast", broadcast_command))
 telegram_bot_app.add_handler(CommandHandler("help", help_command))
+
 telegram_bot_app.add_handler(CallbackQueryHandler(button_callback))
-telegram_bot_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, lambda u, c: None))
+telegram_bot_app.add_handler(
+    CallbackQueryHandler(
+        handle_broadcast_confirmation,
+        pattern="^(confirm_broadcast|cancel_broadcast)$"
+    )
+)
+
+telegram_bot_app.add_handler(
+    MessageHandler(filters.ALL & ~filters.COMMAND, ignore_message)
+)
+
+telegram_bot_app.add_error_handler(error_handler)
 
 # ================= FASTAPI =================
 app = FastAPI()
