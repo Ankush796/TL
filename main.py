@@ -159,10 +159,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
         if support_channel:
             invite_link = await get_channel_invite_link(context, support_channel)
             callback_data = f"check_join_{context.args[0]}" if context.args else "check_join"
-            keyboard = [
-                [InlineKeyboardButton("📢 Join Channel", url=invite_link)],
-                [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
-            ]
+            keyboard = []
+
+for ch in get_support_channels():
+    invite_link = await get_channel_invite_link(context, ch)
+    keyboard.append(
+        [InlineKeyboardButton("📢 Join Channel", url=invite_link)]
+    )
+
+keyboard.append(
+    [InlineKeyboardButton("✅ Check", callback_data=callback_data)]
+)
             message_text = (
                 "🔐 *This is a Protected Link*\n\n"
                 "Join our channel first to access this link.\n"
