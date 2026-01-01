@@ -33,6 +33,8 @@ links_collection = db["protected_links"]
 users_collection = db["users"]
 broadcast_collection = db["broadcast_history"]
 channels_collection = db["channels"]
+lectures_collection = db["lectures"]
+lectures_collection.create_index("created_at")
 
 def init_db():
     try:
@@ -703,6 +705,91 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> No
         reply_markup=reply_markup,
         parse_mode=ParseMode.MARKDOWN
     )
+    
+    # ================= LECTURE SYSTEM =================
+
+# ➕ ADD (ADMIN | REPLY REQUIRED)
+async def add_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = int(os.environ.get("ADMIN_ID", 0))
+
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Only admin can add lectures.")
+        return
+
+    if not update.message.reply_to_message:
+        await update.message.reply_text(
+            "⚠️ Kisi message pe reply karke /add likho",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    content = (
+        update.message.reply_to_message.text
+        or update.message.reply_to_message.caption
+    )
+
+    if not content:
+        await update.message.reply_text("❌ Empty content add nahi ho sakta.")
+        return
+
+    lectures_collection.insert_one({
+        "content": content,
+        "created_at": datetime.datetime.now(),
+        "added_by": update.effective_user.id
+    })
+
+    await update.message.reply_text("✅ Lecture successfully added!")
+
+
+# 📚 LECTURE LIST (PUBLIC)
+async def lecture_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    lectures = list(lectures_collection.find().sort("created_at", 1))
+
+    if not lectures:
+        await update.message.reply_text("📭 Abhi koi lecture add nahi hai.")
+        return
+
+    message = "📚 *Lecture List*\n\n"
+
+    for i, lec in enumerate(lectures, start=1):
+        message += f"*{i}.* {lec['content']}\n\n"
+
+    await update.message.reply_text(
+        message[:4096],
+        parse_mode=ParseMode.MARKDOWN
+    )
+
+
+# ❌ DELETE (ADMIN ONLY | NUMBER BASED)
+async def delete_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    admin_id = int(os.environ.get("ADMIN_ID", 0))
+
+    if update.effective_user.id != admin_id:
+        await update.message.reply_text("❌ Only admin can delete lectures.")
+        return
+
+    if not context.args or not context.args[0].isdigit():
+        await update.message.reply_text(
+            "⚠️ Usage:\n/delete <lecture_number>\n\nExample:\n/delete 2",
+            parse_mode=ParseMode.MARKDOWN
+        )
+        return
+
+    index = int(context.args[0]) - 1
+    lectures = list(lectures_collection.find().sort("created_at", 1))
+
+    if index < 0 or index >= len(lectures):
+        await update.message.reply_text("❌ Invalid lecture number.")
+        return
+
+    lecture = lectures[index]
+    lectures_collection.delete_one({"_id": lecture["_id"]})
+
+    await update.message.reply_text(
+        f"✅ Lecture *{index + 1}* deleted successfully!",
+        parse_mode=ParseMode.MARKDOWN
+    )
+
 
 async def store_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Store user activity."""
@@ -720,6 +807,9 @@ telegram_bot_app.add_handler(CommandHandler("revoke", revoke_command))
 telegram_bot_app.add_handler(CommandHandler("broadcast", broadcast_command))
 telegram_bot_app.add_handler(CommandHandler("stats", stats_command))
 telegram_bot_app.add_handler(CommandHandler("help", help_command))
+telegram_bot_app.add_handler(CommandHandler("add", add_command))
+telegram_bot_app.add_handler(CommandHandler("lecture", lecture_command))
+telegram_bot_app.add_handler(CommandHandler("delete", delete_command))
 telegram_bot_app.add_handler(MessageHandler(filters.ALL & ~filters.COMMAND, store_message))
 
 # Add callback handler
