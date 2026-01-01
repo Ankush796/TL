@@ -749,14 +749,17 @@ async def lecture_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("📭 Abhi koi lecture add nahi hai.")
         return
 
-    message = "📚 *Lecture List*\n\n"
+    # ❌ Markdown hata diya taaki "_" safe rahe
+    message = "📚 Lecture List\n\n"
 
     for i, lec in enumerate(lectures, start=1):
-        message += f"*{i}.* {lec['content']}\n\n"
+        # ❌ Stars (*) hata diye
+        message += f"{i}. {lec['content']}\n\n"
 
+    # ❌ parse_mode=MARKDOWN hata diya
     await update.message.reply_text(
         message[:4096],
-        parse_mode=ParseMode.MARKDOWN
+        disable_web_page_preview=True
     )
 
 
